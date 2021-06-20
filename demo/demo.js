@@ -10,9 +10,9 @@ class LikeButton extends React.Component {
   }
 
   componentDidMount() {
-    setTimeout(() => {
-      this.setState({ liked: true })
-    }, 3000)
+    this.setState({ liked: true })
+    this.setState({ liked: false })
+    this.setState({ liked: true })
   }
 
   render() {

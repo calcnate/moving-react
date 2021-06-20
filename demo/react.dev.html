@@ -31,6 +31,12 @@
           this.state = { liked: false };
         }
 
+        componentDidMount() {
+          this.setState({ liked: true })
+          this.setState({ liked: false })
+          this.setState({ liked: true })
+        }
+
         render() {
           if (this.state.liked) {
             return 'You liked comment number ' + this.props.commentID;

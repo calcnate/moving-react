@@ -3,7 +3,6 @@ import {
   ClassComponent,
   HostRoot,
 } from '../shared/ReactWorkTags.js'
-import { Placement } from '../shared/ReactSideEffectTags.js'
 import {
   constructClassInstance,
   mountClassInstance,
@@ -28,6 +27,7 @@ export function beginWork(current, workInProgress, renderExpirationTime) {
     if (oldProps !== newProps) {
       didReceiveUpdate = true
     } else if (updateExpirationTime < renderExpirationTime) {
+      //低优先级的等到下一轮处理
       didReceiveUpdate = false
       return bailoutOnAlreadyFinishedWork(
         current,
@@ -41,6 +41,7 @@ export function beginWork(current, workInProgress, renderExpirationTime) {
     didReceiveUpdate = false
   }
 
+  //update在本函数内处理完成，重置expirationTime
   workInProgress.expirationTime = NoWork
 
   switch (workInProgress.tag) {
@@ -84,12 +85,8 @@ function updateClassComponent(
   const instance = workInProgress.stateNode
   let shouldUpdate
   if (instance === null) {
-    if (current !== null) {
-      current.alternate = null
-      workInProgress.alternate = null
-      workInProgress.effectTag |= Placement
-    }
-
+    //第一次渲染组件时，instance是空的
+    //创建instance
     constructClassInstance(workInProgress, Component, nextProps)
     mountClassInstance(
       workInProgress,
@@ -161,6 +158,7 @@ function reconcileChildren(
   nextChildren,
   renderExpirationTime
 ) {
+  //current对应屏幕上的DOM，current为空就挂载子元素，不为空则diff子元素
   if (current === null) {
     workInProgress.child = mountChildFibers(
       workInProgress,
@@ -183,21 +181,19 @@ function bailoutOnAlreadyFinishedWork(
   workInProgress,
   renderExpirationTime
 ) {
-  if (current !== null) {
-    // Reuse previous dependencies
-    workInProgress.dependencies = current.dependencies
-  }
   //check子节点是否有未完成的更新
   const childExpirationTime = workInProgress.childExpirationTime
   if (childExpirationTime < renderExpirationTime) {
+    //没有待完成的更新，直接跳过
     return null
   } else {
-    cloneChildFibers(current, workInProgress)
+    //这里clone主要是为了给子fiber增加alternate属性
+    cloneChildFibers(workInProgress)
     return workInProgress.child
   }
 }
 
-function cloneChildFibers(current, workInProgress) {
+function cloneChildFibers(workInProgress) {
   if (workInProgress.child === null) {
     return
   }

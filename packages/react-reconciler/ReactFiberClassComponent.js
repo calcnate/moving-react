@@ -74,7 +74,9 @@ export function mountClassInstance(
 
   initializeUpdateQueue(workInProgress)
 
+  //处理更新
   processUpdateQueue(workInProgress, newProps, instance, renderExpirationTime)
+  //fiber的state已经更新，同步到组件instance上
   instance.state = workInProgress.memoizedState
 
   if (typeof instance.componentDidMount === 'function') {
@@ -140,6 +142,11 @@ export function updateClassInstance(
   return shouldUpdate
 }
 
+/**
+ * 关联组件实例和fiber节点
+ * @param {*} workInProgress
+ * @param {*} instance
+ */
 function adoptClassInstance(workInProgress, instance) {
   instance.updater = classComponentUpdater
   workInProgress.stateNode = instance

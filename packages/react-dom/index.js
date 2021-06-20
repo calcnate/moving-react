@@ -7,45 +7,45 @@ import {
 import {
   scheduleUpdateOnFiber,
   requestCurrentTimeForUpdate,
+  computeExpirationForFiber,
+  unbatchedUpdates,
 } from '../react-reconciler/ReactFiberWorkLoop.js'
 import { HostRoot } from '../shared/ReactWorkTags.js'
-import { Sync } from '../react-reconciler/ReactFiberExpirationTime.js'
+import { FiberRootNode } from '../react-reconciler/ReactFiberRoot.js'
 
-function FiberRootNode(containerInfo, tag) {
-  this.tag = tag
-  this.current = null
-  this.containerInfo = containerInfo
-  this.pendingChildren = null
-  this.pingCache = null
-  this.finishedExpirationTime = 0
-  this.finishedWork = null
-  this.context = null
-  this.pendingContext = null
-  this.callbackNode = null
-
-  this.firstPendingTime = 0
-
-  this.lastPingedTime = 0
-  this.lastExpiredTime = 0
-}
-
+/**
+ * 初始化和更新统一使用这个方法
+ * @param {*} element
+ * @param {*} container
+ */
 function updateContainer(element, container) {
   const current = container.current
-  var expirationTime = Sync
+  const currentTime = requestCurrentTimeForUpdate()
+  const expirationTime = computeExpirationForFiber(currentTime, current)
   const update = createUpdate(expirationTime)
   update.payload = { element }
   enqueueUpdate(current, update)
   scheduleUpdateOnFiber(current, expirationTime)
 }
 
+/**
+ * ReactDOM.render方法，react应用的入口
+ * @param {*} element
+ * @param {*} container dom容器
+ */
 export function render(element, container) {
   const fiberRoot = new FiberRootNode(container, 0)
   const uninitializedFiber = new FiberNode(HostRoot)
+
   fiberRoot.current = uninitializedFiber
   uninitializedFiber.stateNode = fiberRoot
+
   initializeUpdateQueue(uninitializedFiber)
   container._reactRootContainer = fiberRoot
-  updateContainer(element, fiberRoot)
+
+  unbatchedUpdates(() => {
+    updateContainer(element, fiberRoot)
+  })
 }
 
 export default {

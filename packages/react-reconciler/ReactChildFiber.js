@@ -22,11 +22,10 @@ function ChildReconciler(shouldTrackSideEffects) {
     expirationTime
   ) {
     const type = element.type
-
     const key = element.key
-    let child = currentFirstChild
 
     const pendingProps = element.props
+    //根据render方法返回的ReactElement生成fiber节点
     const created = createFiberFromTypeAndProps(
       type,
       key,
@@ -66,6 +65,7 @@ function ChildReconciler(shouldTrackSideEffects) {
   ) {
     const isObject = typeof newChild === 'object' && newChild !== null
 
+    //处理ReactElement
     if (isObject) {
       return placeSingleChild(
         reconcileSingleElement(
@@ -77,6 +77,7 @@ function ChildReconciler(shouldTrackSideEffects) {
       )
     }
 
+    //文本节点
     if (typeof newChild === 'string' || typeof newChild === 'number') {
       return placeSingleChild(
         reconcileSingleTextNode(

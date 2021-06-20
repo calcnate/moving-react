@@ -10,18 +10,16 @@ import { Update } from '../shared/ReactSideEffectTags.js'
 export function completeWork(current, workInProgress) {
   const newProps = workInProgress.pendingProps
 
+  //host类型的fiber会在这一步渲染到DOM上，其它类型的在commit阶段渲染
   switch (workInProgress.tag) {
     case HostRoot:
-      console.log('complete host root')
+      // updateHostContainer(workInProgress);
       break
     case HostComponent:
-      console.log('complete HostComponent')
       if (current !== null && workInProgress.stateNode !== null) {
-        //
+        //updateHostComponent(current,workInProgress,type,newProps)
       } else {
-        if (!newProps) {
-          return null
-        }
+        //创建DOM元素
         let instance = createInstance(
           workInProgress.type,
           newProps,
@@ -31,6 +29,7 @@ export function completeWork(current, workInProgress) {
         appendAllChildren(instance, workInProgress, false, false)
         // This needs to be set before we mount Flare event listeners
 
+        //设置元素的属性
         finalizeInitialChildren(instance, workInProgress.type, newProps)
         workInProgress.stateNode = instance
       }

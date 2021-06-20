@@ -20,9 +20,36 @@ import {
 } from './ReactFiberCommitWork.js'
 import { beginWork } from './ReactFiberBeginWork.js'
 import { createWorkInProgress } from '../react-reconciler/ReactFiber.js'
-import { NoWork, msToExpirationTime, Sync } from './ReactFiberExpirationTime.js'
+import {
+  NoWork,
+  msToExpirationTime,
+  Sync,
+  inferPriorityFromExpirationTime,
+} from './ReactFiberExpirationTime.js'
 import { now } from '../scheduler/index.js'
+import {
+  cancelCallback,
+  flushSyncCallbackQueue,
+  flushSyncCallbackQueueImpl,
+  ImmediatePriority,
+  NoPriority,
+  scheduleSyncCallback,
+} from './SchedulerWithReactIntegration.js'
+import {
+  markRootFinishedAtTime,
+  markRootUpdatedAtTime,
+} from './ReactFiberRoot.js'
 
+const NoContext = /*                    */ 0b000000
+const BatchedContext = /*               */ 0b000001
+const EventContext = /*                 */ 0b000010
+const DiscreteEventContext = /*         */ 0b000100
+const LegacyUnbatchedContext = /*       */ 0b001000
+const RenderContext = /*                */ 0b010000
+const CommitContext = /*                */ 0b100000
+
+// 标识我们在react执行栈中的哪个阶段
+let executionContext = NoContext
 // The fiber we're working on
 let workInProgress = null
 // The expiration time we're rendering
@@ -32,14 +59,41 @@ let nextEffect = null
 
 export function scheduleUpdateOnFiber(fiber, expirationTime) {
   const root = markUpdateTimeFromFiberToRoot(fiber, expirationTime)
-  if (root === null) {
-    return
-  }
-  if (expirationTime === Sync) {
+  if (
+    (executionContext & LegacyUnbatchedContext) !== NoContext &&
+    (executionContext & (RenderContext | CommitContext)) === NoContext
+  ) {
     performSyncWorkOnRoot(root)
+  } else {
+    ensureRootIsScheduled(root)
+    if (executionContext === NoContext) {
+      flushSyncCallbackQueue()
+    }
   }
 }
 
+export function unbatchedUpdates(fn, a) {
+  const prevExecutionContext = executionContext
+  executionContext &= ~BatchedContext
+  executionContext |= LegacyUnbatchedContext
+  try {
+    return fn(a)
+  } finally {
+    executionContext = prevExecutionContext
+    if (executionContext === NoContext) {
+      // Flush the immediate callbacks that were scheduled during this batch
+      flushSyncCallbackQueue()
+    }
+  }
+}
+
+/**
+ * 子节点有了更新任务后，把子节点的expirationTime层层往上传，直到root节点，因为更新组件树都是从root节点开始
+ * 父节点的childExpirationTime用来存储更新源节点的expirationTime，表示子树中有待更新的fiber节点
+ * @param {*} fiber
+ * @param {*} expirationTime
+ * @returns
+ */
 function markUpdateTimeFromFiberToRoot(fiber, expirationTime) {
   if (fiber.expirationTime < expirationTime) {
     fiber.expirationTime = expirationTime
@@ -56,8 +110,7 @@ function markUpdateTimeFromFiberToRoot(fiber, expirationTime) {
   } else {
     while (node !== null) {
       alternate = node.alternate
-      //子节点有了更新任务后，把子节点的expirationTime层层往上传，直到root节点，因为更新组件树都是从root节点开始
-      //父节点的childExpirationTime用来存储更新源节点的expirationTime
+
       if (node.childExpirationTime < expirationTime) {
         node.childExpirationTime = expirationTime
         if (
@@ -79,16 +132,7 @@ function markUpdateTimeFromFiberToRoot(fiber, expirationTime) {
       node = node.return
     }
   }
-
-  if (root !== null) {
-    // Mark that the root has a pending update.
-    //更新待处理时间范围
-    const firstPendingTime = root.firstPendingTime
-    if (expirationTime > firstPendingTime) {
-      root.firstPendingTime = expirationTime
-    }
-  }
-
+  markRootUpdatedAtTime(root, expirationTime)
   return root
 }
 
@@ -99,9 +143,9 @@ function markUpdateTimeFromFiberToRoot(fiber, expirationTime) {
 function performSyncWorkOnRoot(root) {
   const expirationTime = Sync
 
-  //???
   prepareFreshStack(root, expirationTime)
-
+  const prevExecutionContext = executionContext
+  executionContext |= RenderContext
   do {
     try {
       workLoop()
@@ -110,6 +154,7 @@ function performSyncWorkOnRoot(root) {
       console.error(thrownValue)
     }
   } while (true)
+  executionContext = prevExecutionContext
 
   root.finishedWork = root.current.alternate
   root.finishedExpirationTime = expirationTime
@@ -142,9 +187,11 @@ function workLoop() {
 
 function performUnitOfWork(unitOfWork) {
   const current = unitOfWork.alternate
+  //render阶段处理的是unitOfWork，也就是workInProgress对象
   let next = beginWork(current, unitOfWork, renderExpirationTime)
   unitOfWork.memoizedProps = unitOfWork.pendingProps
   if (!next) {
+    //进入complete
     next = completeUnitOfWork(unitOfWork)
   }
   return next
@@ -207,6 +254,14 @@ function commitRoot(root) {
   root.finishedWork = null
   root.finishedExpirationTime = 0
 
+  const remainingExpirationTimeBeforeCommit =
+    getRemainingExpirationTime(finishedWork)
+  markRootFinishedAtTime(
+    root,
+    expirationTime,
+    remainingExpirationTimeBeforeCommit
+  )
+
   workInProgress = null
   renderExpirationTime = NoWork
 
@@ -224,6 +279,9 @@ function commitRoot(root) {
   }
 
   if (firstEffect !== null) {
+    const prevExecutionContext = executionContext
+    executionContext |= CommitContext
+
     nextEffect = firstEffect
     do {
       commitBeforeMutationEffects()
@@ -242,9 +300,14 @@ function commitRoot(root) {
 
     nextEffect = null
     // requestPaint();
+
+    executionContext = prevExecutionContext
   } else {
     root.current = finishedWork
   }
+
+  ensureRootIsScheduled(root)
+  return null
 }
 
 export function commitBeforeMutationEffects() {
@@ -321,6 +384,92 @@ export function requestCurrentTimeForUpdate() {
   if (currentEventTime !== NoWork) {
     return currentEventTime
   }
-  currentEventTime = msToExpirationTime(now())
+  currentEventTime = msToExpirationTime(now()) //以当前的时间来作为过期时间，表示立即执行
   return currentEventTime
+}
+
+export function computeExpirationForFiber(currentTime, fiber) {
+  //暂时只考虑同步模式
+  return Sync
+}
+
+function ensureRootIsScheduled(root) {
+  const lastExpiredTime = root.lastExpiredTime
+  if (lastExpiredTime !== NoWork) {
+    return
+  }
+  const expirationTime = root.firstPendingTime
+  const existingCallbackNode = root.callbackNode
+  if (expirationTime === NoWork) {
+    // There's nothing to work on.
+    if (existingCallbackNode !== null) {
+      root.callbackNode = null
+      root.callbackExpirationTime = NoWork
+      root.callbackPriority = NoPriority
+    }
+    return
+  }
+
+  const currentTime = requestCurrentTimeForUpdate()
+  const priorityLevel = inferPriorityFromExpirationTime(
+    currentTime,
+    expirationTime
+  )
+
+  if (existingCallbackNode !== null) {
+    const existingCallbackPriority = root.callbackPriority
+    const existingCallbackExpirationTime = root.callbackExpirationTime
+    if (
+      // Callback must have the exact same expiration time.
+      existingCallbackExpirationTime === expirationTime &&
+      // Callback must have greater or equal priority.
+      existingCallbackPriority >= priorityLevel
+    ) {
+      // Existing callback is sufficient.
+      return
+    }
+    cancelCallback(existingCallbackNode)
+  }
+
+  root.callbackExpirationTime = expirationTime
+  root.callbackPriority = priorityLevel
+
+  let callbackNode
+  if (expirationTime === Sync) {
+    // Sync React callbacks are scheduled on a special internal queue
+    callbackNode = scheduleSyncCallback(performSyncWorkOnRoot.bind(null, root))
+  }
+
+  root.callbackNode = callbackNode
+}
+
+function getNextRootExpirationTimeToWorkOn(root) {
+  // Determines the next expiration time that the root should render, taking
+  // into account levels that may be suspended, or levels that may have
+  // received a ping.
+
+  const lastExpiredTime = root.lastExpiredTime
+  if (lastExpiredTime !== NoWork) {
+    return lastExpiredTime
+  }
+
+  // If the first pending time is suspended, check if there's a lower priority
+  // pending level that we know about. Or check if we received a ping. Work
+  // on whichever is higher priority.
+  const lastPingedTime = root.lastPingedTime
+  const nextKnownPendingLevel = root.nextKnownPendingLevel
+  const nextLevel =
+    lastPingedTime > nextKnownPendingLevel
+      ? lastPingedTime
+      : nextKnownPendingLevel
+
+  return nextLevel
+}
+
+function getRemainingExpirationTime(fiber) {
+  const updateExpirationTime = fiber.expirationTime
+  const childExpirationTime = fiber.childExpirationTime
+  return updateExpirationTime > childExpirationTime
+    ? updateExpirationTime
+    : childExpirationTime
 }

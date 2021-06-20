@@ -3,6 +3,7 @@ import {
   ShouldCapture,
   DidCapture,
 } from '../shared/ReactSideEffectTags.js'
+import { NoWork, Sync } from './ReactFiberExpirationTime.js'
 
 export const UpdateState = 0
 export const ReplaceState = 1
@@ -10,6 +11,7 @@ export const ForceUpdate = 2
 export const CaptureUpdate = 3
 
 export function initializeUpdateQueue(fiber) {
+  //updateQueue是一个用链表实现的优先队列
   const queue = {
     baseState: fiber.memoizedState,
     baseQueue: null,
@@ -35,12 +37,10 @@ export function createUpdate(expirationTime) {
 
 export function enqueueUpdate(fiber, update) {
   const updateQueue = fiber.updateQueue
-  if (updateQueue === null) {
-    return
-  }
-
   const sharedQueue = updateQueue.shared
   const pending = sharedQueue.pending
+
+  //生成一个环形链表
   if (pending === null) {
     update.next = update
   } else {
@@ -72,11 +72,15 @@ export function processUpdateQueue(
 ) {
   const queue = workInProgress.updateQueue
 
+  //本次更新前还没处理的update
   let baseQueue = queue.baseQueue
 
+  //更新触发的时候，产生的数据会保存在这里
   let pendingQueue = queue.shared.pending
+
   if (pendingQueue !== null) {
     if (baseQueue !== null) {
+      //两个queue都是环形链表，将他们合并成一个大的环形链表
       let baseFirst = baseQueue.next
       let pendingFirst = pendingQueue.next
       baseQueue.next = pendingFirst
@@ -87,6 +91,7 @@ export function processUpdateQueue(
 
     queue.shared.pending = null
 
+    //与hook相关，暂不关注
     const current = workInProgress.alternate
     if (current !== null) {
       const currentQueue = current.updateQueue
@@ -99,7 +104,7 @@ export function processUpdateQueue(
   if (baseQueue !== null) {
     let first = baseQueue.next
     let newState = queue.baseState
-    let newExpirationTime = 0
+    let newExpirationTime = NoWork
 
     let newBaseState = null
     let newBaseQueueFirst = null
@@ -110,6 +115,7 @@ export function processUpdateQueue(
       do {
         const updateExpirationTime = update.expirationTime
         if (updateExpirationTime < renderExpirationTime) {
+          //跳过低优先级的update
           const clone = {
             expirationTime: update.expirationTime,
             suspenseConfig: update.suspenseConfig,
@@ -120,6 +126,8 @@ export function processUpdateQueue(
 
             next: null,
           }
+
+          //优先级较低的update放到baseQueue中，等待下次处理
           if (newBaseQueueLast === null) {
             newBaseQueueFirst = newBaseQueueLast = clone
             newBaseState = newState
@@ -132,9 +140,7 @@ export function processUpdateQueue(
         } else {
           if (newBaseQueueLast !== null) {
             const clone = {
-              expirationTime: 1073741823, // This update is going to be committed so we never want uncommit it.
-              suspenseConfig: update.suspenseConfig,
-
+              expirationTime: Sync, // This update is going to be committed so we never want uncommit it.
               tag: update.tag,
               payload: update.payload,
               callback: update.callback,
@@ -143,7 +149,7 @@ export function processUpdateQueue(
             }
             newBaseQueueLast = newBaseQueueLast.next = clone
           }
-
+          //计算新的state
           newState = getStateFromUpdate(
             workInProgress,
             queue,
@@ -153,6 +159,7 @@ export function processUpdateQueue(
             instance
           )
           const callback = update.callback
+          //setState的第二个参数，更新完成后执行的回调函数
           if (callback !== null) {
             workInProgress.effectTag |= Callback
             let effects = queue.effects
@@ -165,15 +172,7 @@ export function processUpdateQueue(
         }
         update = update.next
         if (update === null || update === first) {
-          pendingQueue = queue.shared.pending
-          if (pendingQueue === null) {
-            break
-          } else {
-            update = baseQueue.next = pendingQueue.next
-            pendingQueue.next = first
-            queue.baseQueue = baseQueue = pendingQueue
-            queue.shared.pending = null
-          }
+          break
         }
       } while (true)
     }
