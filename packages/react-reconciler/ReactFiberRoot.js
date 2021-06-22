@@ -6,16 +6,16 @@ export function FiberRootNode(containerInfo, tag) {
   this.containerInfo = containerInfo
   this.pendingChildren = null
   this.pingCache = null
-  this.finishedExpirationTime = 0
+  this.finishedExpirationTime = NoWork
   this.finishedWork = null
   this.context = null
   this.pendingContext = null
   this.callbackNode = null
 
-  this.firstPendingTime = 0
+  this.firstPendingTime = NoWork
 
-  this.lastPingedTime = 0
-  this.lastExpiredTime = 0
+  this.lastPingedTime = NoWork
+  this.lastExpiredTime = NoWork
 }
 
 export function markRootFinishedAtTime(

@@ -124,12 +124,7 @@ function insertOrAppendPlacementNodeIntoContainer(node, before, parent) {
   }
 }
 
-export function commitLifeCycles(
-  finishedRoot,
-  current,
-  finishedWork,
-  committedExpirationTime
-) {
+export function commitLifeCycles(finishedRoot, current, finishedWork) {
   switch (finishedWork.tag) {
     case FunctionComponent: {
       return

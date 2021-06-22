@@ -17,28 +17,18 @@ import { reconcileChildFibers, mountChildFibers } from './ReactChildFiber.js'
 import { NoWork } from './ReactFiberExpirationTime.js'
 import { createWorkInProgress } from './ReactFiber.js'
 
-let didReceiveUpdate = false
-
 export function beginWork(current, workInProgress, renderExpirationTime) {
   const updateExpirationTime = workInProgress.expirationTime
+
   if (current !== null) {
-    const oldProps = current.memoizedProps
-    const newProps = workInProgress.pendingProps
-    if (oldProps !== newProps) {
-      didReceiveUpdate = true
-    } else if (updateExpirationTime < renderExpirationTime) {
-      //低优先级的等到下一轮处理
-      didReceiveUpdate = false
+    if (updateExpirationTime === NoWork) {
+      //不需要更新的节点直接跳过
       return bailoutOnAlreadyFinishedWork(
         current,
         workInProgress,
         renderExpirationTime
       )
-    } else {
-      didReceiveUpdate = false
     }
-  } else {
-    didReceiveUpdate = false
   }
 
   //update在本函数内处理完成，重置expirationTime

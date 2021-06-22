@@ -231,8 +231,6 @@ function completeUnitOfWork(unitOfWork) {
         }
         returnFiber.lastEffect = workInProgress
       }
-    } else {
-      // const next = unwindWork(workInProgress, renderExpirationTime);
     }
 
     const siblingFiber = workInProgress.sibling
@@ -247,20 +245,20 @@ function completeUnitOfWork(unitOfWork) {
 
 function commitRoot(root) {
   const finishedWork = root.finishedWork
-  const expirationTime = root.finishedExpirationTime
+  // const expirationTime = root.finishedExpirationTime
   if (finishedWork === null) {
     return null
   }
   root.finishedWork = null
   root.finishedExpirationTime = 0
 
-  const remainingExpirationTimeBeforeCommit =
-    getRemainingExpirationTime(finishedWork)
-  markRootFinishedAtTime(
-    root,
-    expirationTime,
-    remainingExpirationTimeBeforeCommit
-  )
+  // const remainingExpirationTimeBeforeCommit =
+  //   getRemainingExpirationTime(finishedWork)
+  // markRootFinishedAtTime(
+  //   root,
+  //   expirationTime,
+  //   remainingExpirationTimeBeforeCommit
+  // )
 
   workInProgress = null
   renderExpirationTime = NoWork
@@ -295,7 +293,7 @@ function commitRoot(root) {
     root.current = finishedWork
     nextEffect = firstEffect
     do {
-      commitLayoutEffects(root, expirationTime)
+      commitLayoutEffects(root)
     } while (nextEffect !== null)
 
     nextEffect = null
@@ -361,18 +359,13 @@ export function discreteUpdates(fn, a, b, c, d) {
   return callback()
 }
 
-export function commitLayoutEffects(root, committedExpirationTime) {
+export function commitLayoutEffects(root) {
   while (nextEffect !== null) {
     const effectTag = nextEffect.effectTag
 
     if (effectTag & (Update | Callback)) {
       const current = nextEffect.alternate
-      commitLayoutEffectOnFiber(
-        root,
-        current,
-        nextEffect,
-        committedExpirationTime
-      )
+      commitLayoutEffectOnFiber(root, current, nextEffect)
     }
 
     nextEffect = nextEffect.nextEffect
@@ -388,7 +381,7 @@ export function requestCurrentTimeForUpdate() {
   return currentEventTime
 }
 
-export function computeExpirationForFiber(currentTime, fiber) {
+export function computeExpirationForFiber() {
   //暂时只考虑同步模式
   return Sync
 }
@@ -464,12 +457,4 @@ function getNextRootExpirationTimeToWorkOn(root) {
       : nextKnownPendingLevel
 
   return nextLevel
-}
-
-function getRemainingExpirationTime(fiber) {
-  const updateExpirationTime = fiber.expirationTime
-  const childExpirationTime = fiber.childExpirationTime
-  return updateExpirationTime > childExpirationTime
-    ? updateExpirationTime
-    : childExpirationTime
 }

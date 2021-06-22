@@ -13,7 +13,6 @@ export function completeWork(current, workInProgress) {
   //host类型的fiber会在这一步渲染到DOM上，其它类型的在commit阶段渲染
   switch (workInProgress.tag) {
     case HostRoot:
-      // updateHostContainer(workInProgress);
       break
     case HostComponent:
       if (current !== null && workInProgress.stateNode !== null) {

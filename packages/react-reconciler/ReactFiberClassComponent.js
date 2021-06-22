@@ -97,10 +97,13 @@ export function updateClassInstance(
 
   const oldProps = workInProgress.memoizedProps
   instance.props = oldProps
+
   const oldState = workInProgress.memoizedState
   let newState = (instance.state = oldState)
+
   processUpdateQueue(workInProgress, newProps, instance, renderExpirationTime)
   newState = workInProgress.memoizedState
+
   if (oldProps === newProps && oldState === newState) {
     if (typeof instance.componentDidUpdate === 'function') {
       if (
