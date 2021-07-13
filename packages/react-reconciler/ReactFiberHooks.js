@@ -39,7 +39,6 @@ function areHookInputsEqual(nextDeps, prevDeps) {
   }
   return true
 }
-
 /**
  * 渲染带hook的函数组件
  *
@@ -85,23 +84,17 @@ export function renderWithHooks(
 }
 
 export const ContextOnlyDispatcher = {
-  useContext: () => console.error('Invalid hook call'),
   useEffect: () => console.error('Invalid hook call'),
-  useMemo: () => console.error('Invalid hook call'),
   useState: () => console.error('Invalid hook call'),
 }
 
 const HooksDispatcherOnMount = {
-  useCallback: mountCallback,
   useEffect: mountEffect,
-  useMemo: mountMemo,
   useState: mountState,
 }
 
 const HooksDispatcherOnUpdate = {
-  useCallback: updateCallback,
   useEffect: updateEffect,
-  useMemo: updateMemo,
   useState: updateState,
 }
 
@@ -193,55 +186,6 @@ function mountEffectImpl(fiberEffectTag, hookEffectTag, create, deps) {
   )
 }
 
-function mountCallback(callback, deps) {
-  const hook = mountWorkInProgressHook()
-  const nextDeps = deps === undefined ? null : deps
-  hook.memoizedState = [callback, nextDeps]
-  return callback
-}
-
-function updateCallback(callback, deps) {
-  const hook = updateWorkInProgressHook()
-  const nextDeps = deps === undefined ? null : deps
-  const prevState = hook.memoizedState
-  if (prevState !== null) {
-    if (nextDeps !== null) {
-      const prevDeps = prevState[1]
-      if (areHookInputsEqual(nextDeps, prevDeps)) {
-        return prevState[0]
-      }
-    }
-  }
-  hook.memoizedState = [callback, nextDeps]
-  return callback
-}
-
-function mountMemo(nextCreate, deps) {
-  const hook = mountWorkInProgressHook()
-  const nextDeps = deps === undefined ? null : deps
-  const nextValue = nextCreate()
-  hook.memoizedState = [nextValue, nextDeps]
-  return nextValue
-}
-
-function updateMemo(nextCreate, deps) {
-  const hook = updateWorkInProgressHook()
-  const nextDeps = deps === undefined ? null : deps
-  const prevState = hook.memoizedState
-  if (prevState !== null) {
-    // Assume these are defined. If they're not, areHookInputsEqual will warn.
-    if (nextDeps !== null) {
-      const prevDeps = prevState[1]
-      if (areHookInputsEqual(nextDeps, prevDeps)) {
-        return prevState[0]
-      }
-    }
-  }
-  const nextValue = nextCreate()
-  hook.memoizedState = [nextValue, nextDeps]
-  return nextValue
-}
-
 function mountEffect(create, deps) {
   return mountEffectImpl(
     UpdateEffect | PassiveEffect,
@@ -251,7 +195,14 @@ function mountEffect(create, deps) {
   )
 }
 
-function updateEffect() {}
+function updateEffect(create, deps) {
+  return updateEffectImpl(
+    UpdateEffect | PassiveEffect,
+    HookPassive,
+    create,
+    deps
+  )
+}
 
 function createFunctionComponentUpdateQueue() {
   return {
@@ -302,9 +253,7 @@ function updateReducer(reducer, initialArg, init) {
     do {
       const updateExpirationTime = update.expirationTime
       if (updateExpirationTime < renderExpirationTime) {
-        // Priority is insufficient. Skip this update. If this is the first
-        // skipped update, the previous update/state is the new base
-        // update/state.
+        // 跳过低优先级的更新
         const clone = {
           expirationTime: update.expirationTime,
           suspenseConfig: update.suspenseConfig,
@@ -339,17 +288,6 @@ function updateReducer(reducer, initialArg, init) {
           newBaseQueueLast = newBaseQueueLast.next = clone
         }
 
-        // Mark the event time of this update as relevant to this render pass.
-        // TODO: This should ideally use the true event time of this update rather than
-        // its priority which is a derived and not reverseable value.
-        // TODO: We should skip this update if it was already committed but currently
-        // we have no way of detecting the difference between a committed and suspended
-        // update here.
-        // markRenderEventTimeAndConfig(
-        //   updateExpirationTime,
-        //   update.suspenseConfig
-        // )
-
         // Process this update.
         if (update.eagerReducer === reducer) {
           // If this update was processed eagerly, and its reducer matches the
@@ -383,7 +321,7 @@ function updateReducer(reducer, initialArg, init) {
   }
 
   const dispatch = queue.dispatch
-  return [hook.memoizedState, dispatch]
+  return [hook.memoizedState, dispatch] //每次更新都返回新的tuple
 }
 
 function mountState(initialState) {
@@ -405,7 +343,13 @@ function mountState(initialState) {
   ))
   return [hook.memoizedState, dispatch] //使用useState返回的tuple
 }
-
+//
+/**
+ * 更新state的值，如果useState在条件语句中，有可能会得不到更新
+ *
+ * @param {*} initialState
+ * @returns
+ */
 function updateState(initialState) {
   return updateReducer(basicStateReducer, initialState)
 }
@@ -509,4 +453,31 @@ function dispatchAction(fiber, queue, action) {
 
     scheduleWork(fiber, expirationTime)
   }
+}
+
+function updateEffectImpl(fiberEffectTag, hookEffectTag, create, deps) {
+  const hook = updateWorkInProgressHook()
+  const nextDeps = deps === undefined ? null : deps
+  let destroy = undefined
+
+  if (currentHook !== null) {
+    const prevEffect = currentHook.memoizedState
+    destroy = prevEffect.destroy
+    if (nextDeps !== null) {
+      const prevDeps = prevEffect.deps
+      if (areHookInputsEqual(nextDeps, prevDeps)) {
+        pushEffect(hookEffectTag, create, destroy, nextDeps)
+        return
+      }
+    }
+  }
+
+  currentlyRenderingFiber.effectTag |= fiberEffectTag
+
+  hook.memoizedState = pushEffect(
+    HookHasEffect | hookEffectTag,
+    create,
+    destroy,
+    nextDeps
+  )
 }
