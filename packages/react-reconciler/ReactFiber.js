@@ -1,5 +1,11 @@
 import { NoEffect } from '../shared/ReactSideEffectTags.js'
 import { NoWork } from './ReactFiberExpirationTime.js'
+import {
+  ClassComponent,
+  HostComponent,
+  HostText,
+  IndeterminateComponent,
+} from '../shared/ReactWorkTags.js'
 
 export default function FiberNode(tag, pendingProps, key) {
   // Instance
@@ -7,7 +13,7 @@ export default function FiberNode(tag, pendingProps, key) {
   this.key = key //标记同层级不同的组件
   this.elementType = null //ReactElement.$$typeof，详见shared/ReactSymbols.js
   this.type = null //创建ReactElement时候的type
-  this.stateNode = null //组件的instance或者DOM节点
+  this.stateNode = null //组件实际的状态，比如DOM元素，或者只是一个instance
 
   // Fiber
   this.return = null //父节点，除了根节点，其它节点都有return属性
@@ -76,4 +82,50 @@ export function createWorkInProgress(current, pendingProps) {
   workInProgress.ref = current.ref
 
   return workInProgress
+}
+
+export function createFiberFromTypeAndProps(type, key, pendingProps) {
+  let fiberTag = IndeterminateComponent
+
+  if (typeof type === 'function') {
+    if (shouldConstruct(type)) {
+      fiberTag = ClassComponent
+    }
+  } else if (typeof type === 'string') {
+    fiberTag = HostComponent
+  }
+  const fiber = new FiberNode(fiberTag, pendingProps, key)
+  fiber.elementType = type
+  fiber.type = type
+
+  return fiber
+}
+
+function shouldConstruct(Component) {
+  const prototype = Component.prototype
+  return !!(prototype && prototype.isReactComponent)
+}
+
+export function createFiberFromElement(element, mode, expirationTime) {
+  let owner = null
+
+  const type = element.type
+  const key = element.key
+  const pendingProps = element.props
+  const fiber = createFiberFromTypeAndProps(
+    type,
+    key,
+    pendingProps,
+    owner,
+    mode,
+    expirationTime
+  )
+
+  return fiber
+}
+
+export function createFiberFromText(content, mode, expirationTime) {
+  const fiber = new FiberNode(HostText, content, null, mode)
+  fiber.expirationTime = expirationTime
+  return fiber
 }

@@ -25,16 +25,6 @@ export function markRootFinishedAtTime(
 ) {
   // Update the range of pending times
   root.firstPendingTime = remainingExpirationTime
-
-  if (finishedExpirationTime <= root.lastPingedTime) {
-    // Clear the pinged time
-    root.lastPingedTime = NoWork
-  }
-
-  if (finishedExpirationTime <= root.lastExpiredTime) {
-    // Clear the expired time
-    root.lastExpiredTime = NoWork
-  }
 }
 
 export function markRootUpdatedAtTime(root, expirationTime) {

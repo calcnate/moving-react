@@ -2,26 +2,39 @@ import {
   FunctionComponent,
   ClassComponent,
   HostRoot,
+  IndeterminateComponent,
+  HostComponent,
 } from '../shared/ReactWorkTags.js'
 import {
+  adoptClassInstance,
   constructClassInstance,
   mountClassInstance,
   updateClassInstance,
 } from './ReactFiberClassComponent.js'
 import {
   cloneUpdateQueue,
+  initializeUpdateQueue,
   processUpdateQueue,
 } from '../react-reconciler/ReactUpdateQueue.js'
 
 import { reconcileChildFibers, mountChildFibers } from './ReactChildFiber.js'
 import { NoWork } from './ReactFiberExpirationTime.js'
 import { createWorkInProgress } from './ReactFiber.js'
+import { bailoutHooks, renderWithHooks } from './ReactFiberHooks.js'
+import { shouldSetTextContent } from '../react-dom/ReactDOMHostConfig.js'
+
+let didReceiveUpdate = false
 
 export function beginWork(current, workInProgress, renderExpirationTime) {
   const updateExpirationTime = workInProgress.expirationTime
 
   if (current !== null) {
-    if (updateExpirationTime === NoWork) {
+    const oldProps = current.memoizedProps
+    const newProps = workInProgress.pendingProps
+    if (oldProps !== newProps) {
+      didReceiveUpdate = true
+    } else if (updateExpirationTime === NoWork) {
+      didReceiveUpdate = false
       //不需要更新的节点直接跳过
       return bailoutOnAlreadyFinishedWork(
         current,
@@ -35,6 +48,14 @@ export function beginWork(current, workInProgress, renderExpirationTime) {
   workInProgress.expirationTime = NoWork
 
   switch (workInProgress.tag) {
+    case IndeterminateComponent: {
+      return mountIndeterminateComponent(
+        current,
+        workInProgress,
+        workInProgress.type,
+        renderExpirationTime
+      )
+    }
     case FunctionComponent: {
       const Component = workInProgress.type
       const unresolvedProps = workInProgress.pendingProps
@@ -60,10 +81,55 @@ export function beginWork(current, workInProgress, renderExpirationTime) {
     case HostRoot: {
       return updateHostRoot(current, workInProgress, renderExpirationTime)
     }
+    case HostComponent:
+      return updateHostComponent(current, workInProgress, renderExpirationTime)
   }
 }
 
-function updateFunctionComponent() {}
+function updateFunctionComponent(
+  current,
+  workInProgress,
+  Component,
+  nextProps,
+  renderExpirationTime
+) {
+  let nextChildren = renderWithHooks(
+    current,
+    workInProgress,
+    Component,
+    nextProps,
+    renderExpirationTime
+  )
+  if (current !== null && !didReceiveUpdate) {
+    bailoutHooks(current, workInProgress, renderExpirationTime)
+    return bailoutOnAlreadyFinishedWork(
+      current,
+      workInProgress,
+      renderExpirationTime
+    )
+  }
+  reconcileChildren(current, workInProgress, nextChildren, renderExpirationTime)
+  return workInProgress.child
+}
+
+function mountIndeterminateComponent(
+  _current,
+  workInProgress,
+  Component,
+  renderExpirationTime
+) {
+  const props = workInProgress.pendingProps
+  let value = renderWithHooks(
+    null,
+    workInProgress,
+    Component,
+    props,
+    renderExpirationTime
+  )
+  workInProgress.tag = FunctionComponent //转换成Function组件
+  reconcileChildren(null, workInProgress, value, renderExpirationTime)
+  return workInProgress.child
+}
 
 function updateClassComponent(
   current,
@@ -106,9 +172,20 @@ function updateClassComponent(
   return nextUnitOfWork
 }
 
-function updateHostRoot(current, workInProgress, renderExpirationTime) {
-  const updateQueue = workInProgress.updateQueue
+function updateHostComponent(current, workInProgress, renderExpirationTime) {
+  const type = workInProgress.type
+  const nextProps = workInProgress.pendingProps
 
+  let nextChildren = nextProps.children
+  const isDirectTextChild = shouldSetTextContent(type, nextProps)
+  if (isDirectTextChild) {
+    nextChildren = null
+  }
+  reconcileChildren(current, workInProgress, nextChildren, renderExpirationTime)
+  return workInProgress.child
+}
+
+function updateHostRoot(current, workInProgress, renderExpirationTime) {
   const nextProps = workInProgress.pendingProps
   const prevState = workInProgress.memoizedState
   const prevChildren = prevState !== null ? prevState.element : null
@@ -200,4 +277,7 @@ function cloneChildFibers(workInProgress) {
     newChild.return = workInProgress
   }
   newChild.sibling = null
+}
+export function markWorkInProgressReceivedUpdate() {
+  didReceiveUpdate = true
 }

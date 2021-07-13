@@ -17,6 +17,8 @@ import {
   commitPlacement,
   commitLifeCycles as commitLayoutEffectOnFiber,
   commitDeletion,
+  commitPassiveHookEffects,
+  commitWork,
 } from './ReactFiberCommitWork.js'
 import { beginWork } from './ReactFiberBeginWork.js'
 import { createWorkInProgress } from '../react-reconciler/ReactFiber.js'
@@ -26,19 +28,21 @@ import {
   Sync,
   inferPriorityFromExpirationTime,
 } from './ReactFiberExpirationTime.js'
-import { now } from '../scheduler/index.js'
+import { now, runWithPriority } from '../scheduler/index.js'
 import {
   cancelCallback,
   flushSyncCallbackQueue,
-  flushSyncCallbackQueueImpl,
   ImmediatePriority,
   NoPriority,
+  NormalPriority,
+  scheduleCallback,
   scheduleSyncCallback,
 } from './SchedulerWithReactIntegration.js'
 import {
   markRootFinishedAtTime,
   markRootUpdatedAtTime,
 } from './ReactFiberRoot.js'
+import { Passive } from './ReactHookEffectTags.js'
 
 const NoContext = /*                    */ 0b000000
 const BatchedContext = /*               */ 0b000001
@@ -57,6 +61,12 @@ let renderExpirationTime = NoWork
 
 let nextEffect = null
 
+let rootDoesHavePassiveEffects = false
+
+let pendingPassiveEffectsExpirationTime = NoWork
+
+let rootWithPendingPassiveEffects = null
+
 export function scheduleUpdateOnFiber(fiber, expirationTime) {
   const root = markUpdateTimeFromFiberToRoot(fiber, expirationTime)
   if (
@@ -67,6 +77,7 @@ export function scheduleUpdateOnFiber(fiber, expirationTime) {
   } else {
     ensureRootIsScheduled(root)
     if (executionContext === NoContext) {
+      //执行同步的任务
       flushSyncCallbackQueue()
     }
   }
@@ -143,6 +154,7 @@ function markUpdateTimeFromFiberToRoot(fiber, expirationTime) {
 function performSyncWorkOnRoot(root) {
   const expirationTime = Sync
 
+  flushPassiveEffects()
   prepareFreshStack(root, expirationTime)
   const prevExecutionContext = executionContext
   executionContext |= RenderContext
@@ -151,15 +163,17 @@ function performSyncWorkOnRoot(root) {
       workLoop()
       break
     } catch (thrownValue) {
+      handleError(root, thrownValue)
       console.error(thrownValue)
     }
   } while (true)
   executionContext = prevExecutionContext
 
-  root.finishedWork = root.current.alternate
+  root.finishedWork = root.current.alternate //执行完render阶段的workInProgress节点
   root.finishedExpirationTime = expirationTime
-
   commitRoot(root)
+  ensureRootIsScheduled(root)
+  return null
 }
 
 function prepareFreshStack(root, expirationTime) {
@@ -198,6 +212,7 @@ function performUnitOfWork(unitOfWork) {
 }
 
 function completeUnitOfWork(unitOfWork) {
+  //完成当前工作单元（unit of work）,然后处理下一个节点
   workInProgress = unitOfWork
   do {
     const current = workInProgress.alternate
@@ -212,6 +227,7 @@ function completeUnitOfWork(unitOfWork) {
       returnFiber !== null &&
       (returnFiber.effectTag & Incomplete) === NoEffect
     ) {
+      //子树上的带有side effect的节点加到父组件上保存，用链表的结构保存
       if (returnFiber.firstEffect === null) {
         returnFiber.firstEffect = workInProgress.firstEffect
       }
@@ -245,23 +261,23 @@ function completeUnitOfWork(unitOfWork) {
 
 function commitRoot(root) {
   const finishedWork = root.finishedWork
-  // const expirationTime = root.finishedExpirationTime
+  const expirationTime = root.finishedExpirationTime
   if (finishedWork === null) {
     return null
   }
   root.finishedWork = null
   root.finishedExpirationTime = 0
 
-  // const remainingExpirationTimeBeforeCommit =
-  //   getRemainingExpirationTime(finishedWork)
-  // markRootFinishedAtTime(
-  //   root,
-  //   expirationTime,
-  //   remainingExpirationTimeBeforeCommit
-  // )
-
   workInProgress = null
   renderExpirationTime = NoWork
+
+  const remainingExpirationTimeBeforeCommit =
+    getRemainingExpirationTime(finishedWork)
+  markRootFinishedAtTime(
+    root,
+    expirationTime,
+    remainingExpirationTimeBeforeCommit
+  )
 
   let firstEffect
   if (finishedWork.effectTag > PerformedWork) {
@@ -272,7 +288,7 @@ function commitRoot(root) {
       firstEffect = finishedWork
     }
   } else {
-    // There is no effect on the root.
+    // root上没有side effect
     firstEffect = finishedWork.firstEffect
   }
 
@@ -304,12 +320,35 @@ function commitRoot(root) {
     root.current = finishedWork
   }
 
+  rootDoesHavePassiveEffects = false
+  rootWithPendingPassiveEffects = root
+
   ensureRootIsScheduled(root)
+
+  //如果不是批量模式下直接结束
+  if ((executionContext & LegacyUnbatchedContext) !== NoContext) {
+    return null
+  }
+
+  flushSyncCallbackQueue()
   return null
 }
 
 export function commitBeforeMutationEffects() {
   while (nextEffect !== null) {
+    const effectTag = nextEffect.effectTag
+
+    if ((effectTag & Passive) !== NoEffect) {
+      // If there are passive effects, schedule a callback to flush at
+      // the earliest opportunity.
+      if (!rootDoesHavePassiveEffects) {
+        rootDoesHavePassiveEffects = true
+        scheduleCallback(NormalPriority, () => {
+          flushPassiveEffects()
+          return null
+        })
+      }
+    }
     nextEffect = nextEffect.nextEffect
   }
 }
@@ -335,13 +374,13 @@ function commitMutationEffects(root) {
         commitPlacement(nextEffect)
         nextEffect.effectTag &= ~Placement
         const current = nextEffect.alternate
-        // commitWork(current, nextEffect)
+        commitWork(current, nextEffect)
         break
       }
 
       case Update: {
         const current = nextEffect.alternate
-        // commitWork(current, nextEffect)
+        commitWork(current, nextEffect)
         break
       }
       case Deletion: {
@@ -391,7 +430,7 @@ function ensureRootIsScheduled(root) {
   if (lastExpiredTime !== NoWork) {
     return
   }
-  const expirationTime = root.firstPendingTime
+  const expirationTime = getNextRootExpirationTimeToWorkOn(root)
   const existingCallbackNode = root.callbackNode
   if (expirationTime === NoWork) {
     // There's nothing to work on.
@@ -437,24 +476,63 @@ function ensureRootIsScheduled(root) {
 }
 
 function getNextRootExpirationTimeToWorkOn(root) {
-  // Determines the next expiration time that the root should render, taking
-  // into account levels that may be suspended, or levels that may have
-  // received a ping.
+  return root.firstPendingTime
+}
 
-  const lastExpiredTime = root.lastExpiredTime
-  if (lastExpiredTime !== NoWork) {
-    return lastExpiredTime
+function handleError(root, thrownValue) {
+  if (workInProgress === null || workInProgress.return === null) {
+    workInProgress = null
+    return null
+  }
+  workInProgress.effectTag |= Incomplete
+  workInProgress.firstEffect = workInProgress.lastEffect = null
+  console.error(thrownValue)
+  workInProgress = completeUnitOfWork(workInProgress)
+}
+
+export function flushPassiveEffects() {
+  return runWithPriority(NormalPriority, flushPassiveEffectsImpl) //暂时都使用NormalPriority代替
+}
+
+function flushPassiveEffectsImpl() {
+  if (rootWithPendingPassiveEffects === null) {
+    return false
+  }
+  const root = rootWithPendingPassiveEffects
+  rootWithPendingPassiveEffects = null
+  pendingPassiveEffectsExpirationTime = NoWork
+
+  const prevExecutionContext = executionContext
+  executionContext |= CommitContext
+
+  // Note: This currently assumes there are no passive effects on the root fiber
+  // because the root is not part of its own effect list.
+  // This could change in the future.
+  let effect = root.current.firstEffect
+
+  while (effect !== null) {
+    try {
+      commitPassiveHookEffects(effect)
+    } catch (error) {
+      // captureCommitPhaseError(effect, error)
+    }
+    const nextNextEffect = effect.nextEffect
+    // Remove nextEffect pointer to assist GC
+    effect.nextEffect = null
+    effect = nextNextEffect
   }
 
-  // If the first pending time is suspended, check if there's a lower priority
-  // pending level that we know about. Or check if we received a ping. Work
-  // on whichever is higher priority.
-  const lastPingedTime = root.lastPingedTime
-  const nextKnownPendingLevel = root.nextKnownPendingLevel
-  const nextLevel =
-    lastPingedTime > nextKnownPendingLevel
-      ? lastPingedTime
-      : nextKnownPendingLevel
+  executionContext = prevExecutionContext
 
-  return nextLevel
+  flushSyncCallbackQueue()
+
+  return true
+}
+
+function getRemainingExpirationTime(fiber) {
+  const updateExpirationTime = fiber.expirationTime
+  const childExpirationTime = fiber.childExpirationTime
+  return updateExpirationTime > childExpirationTime
+    ? updateExpirationTime
+    : childExpirationTime
 }

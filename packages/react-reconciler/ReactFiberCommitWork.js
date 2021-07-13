@@ -4,6 +4,7 @@ import {
   appendChildToContainer,
   removeChildFromContainer,
   removeChild,
+  commitUpdate,
 } from '../react-dom/ReactDOMHostConfig.js'
 import { HostComponent, HostRoot } from '../shared/ReactWorkTags.js'
 import { ContentReset } from '../shared/ReactSideEffectTags.js'
@@ -14,6 +15,13 @@ import {
   ClassComponent,
 } from '../shared/ReactWorkTags.js'
 import { commitUpdateQueue } from './ReactUpdateQueue.js'
+import { NoEffect, Passive } from './ReactHookEffectTags.js'
+import {
+  NoEffect as NoHookEffect,
+  HasEffect as HookHasEffect,
+  Layout as HookLayout,
+  Passive as HookPassive,
+} from './ReactHookEffectTags.js'
 
 export function commitResetTextContent(current) {
   resetTextContent(current.stateNode)
@@ -267,5 +275,95 @@ function unmountHostComponents(finishedRoot, current) {
     }
     node.sibling.return = node.return
     node = node.sibling
+  }
+}
+
+function commitHookEffectListUnmount(tag, finishedWork) {
+  const updateQueue = finishedWork.updateQueue
+  let lastEffect = updateQueue !== null ? updateQueue.lastEffect : null
+  if (lastEffect !== null) {
+    const firstEffect = lastEffect.next
+    let effect = firstEffect
+    do {
+      if ((effect.tag & tag) === tag) {
+        // Unmount
+        const destroy = effect.destroy
+        effect.destroy = undefined
+        if (destroy !== undefined) {
+          destroy()
+        }
+      }
+      effect = effect.next
+    } while (effect !== firstEffect)
+  }
+}
+
+export function commitPassiveHookEffects(finishedWork) {
+  if ((finishedWork.effectTag & Passive) !== NoEffect) {
+    switch (finishedWork.tag) {
+      case FunctionComponent: {
+        commitHookEffectListUnmount(HookPassive | HookHasEffect, finishedWork)
+        commitHookEffectListMount(HookPassive | HookHasEffect, finishedWork)
+        break
+      }
+      default:
+        break
+    }
+  }
+}
+
+export function commitWork(current, finishedWork) {
+  switch (finishedWork.tag) {
+    case FunctionComponent: {
+      // Layout effects are destroyed during the mutation phase so that all
+      // destroy functions for all fibers are called before any create functions.
+      // This prevents sibling component effects from interfering with each other,
+      // e.g. a destroy function in one component should never override a ref set
+      // by a create function in another component during the same commit.
+      commitHookEffectListUnmount(HookLayout | HookHasEffect, finishedWork)
+      return
+    }
+    case ClassComponent: {
+      return
+    }
+    case HostComponent: {
+      const instance = finishedWork.stateNode
+      if (instance != null) {
+        // Commit the work prepared earlier.
+        const newProps = finishedWork.memoizedProps
+        // For hydration we reuse the update path but we treat the oldProps
+        // as the newProps. The updatePayload will contain the real change in
+        // this case.
+        const oldProps = current !== null ? current.memoizedProps : newProps
+        const type = finishedWork.type
+        // TODO: Type the updateQueue to be specific to host components.
+        const updatePayload = finishedWork.updateQueue
+        finishedWork.updateQueue = null
+        if (updatePayload !== null) {
+          commitUpdate(
+            instance,
+            updatePayload,
+            type,
+            oldProps,
+            newProps,
+            finishedWork
+          )
+        }
+      }
+      return
+    }
+    case HostText: {
+      const textInstance = finishedWork.stateNode
+      const newText = finishedWork.memoizedProps
+      // For hydration we reuse the update path but we treat the oldProps
+      // as the newProps. The updatePayload will contain the real change in
+      // this case.
+      const oldText = current !== null ? current.memoizedProps : newText
+      commitTextUpdate(textInstance, oldText, newText)
+      return
+    }
+    case HostRoot: {
+      return
+    }
   }
 }

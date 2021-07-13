@@ -10,5 +10,6 @@ module.exports = {
   },
   rules: {
     'no-constant-condition': 'off',
+    'no-prototype-builtins': 'off',
   },
 }

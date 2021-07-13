@@ -1,5 +1,5 @@
 import {
-  scheduleCallback,
+  scheduleCallback as Scheduler_scheduleCallback,
   cancelCallback as scheduleCancelCallback,
   Scheduler_ImmediatePriority,
   Scheduler_UserBlockingPriority,
@@ -42,7 +42,7 @@ export function flushSyncCallbackQueueImpl() {
           let callback = queue[i]
           do {
             callback = callback(isSync)
-          } while (callback !== null)
+          } while (callback)
         }
       })
       syncQueue = null
@@ -51,7 +51,10 @@ export function flushSyncCallbackQueueImpl() {
       if (syncQueue !== null) {
         syncQueue = syncQueue.slice(i + 1)
       }
-      scheduleCallback(Scheduler_ImmediatePriority, flushSyncCallbackQueue)
+      Scheduler_scheduleCallback(
+        Scheduler_ImmediatePriority,
+        flushSyncCallbackQueue
+      )
       throw error
     } finally {
       isFlushingSyncQueue = false
@@ -67,7 +70,7 @@ export function cancelCallback(callbackNode) {
 export function scheduleSyncCallback(callback) {
   if (syncQueue === null) {
     syncQueue = [callback]
-    immediateQueueCallbackNode = scheduleCallback(
+    immediateQueueCallbackNode = Scheduler_scheduleCallback(
       Scheduler_ImmediatePriority,
       flushSyncCallbackQueueImpl
     )
@@ -97,4 +100,9 @@ function reactPriorityToSchedulerPriority(reactPriorityLevel) {
 export function runWithPriority(reactPriorityLevel, fn) {
   const priorityLevel = reactPriorityToSchedulerPriority(reactPriorityLevel)
   return Scheduler_runWithPriority(priorityLevel, fn)
+}
+
+export function scheduleCallback(reactPriorityLevel, callback, options) {
+  const priorityLevel = reactPriorityToSchedulerPriority(reactPriorityLevel)
+  return Scheduler_scheduleCallback(priorityLevel, callback, options)
 }

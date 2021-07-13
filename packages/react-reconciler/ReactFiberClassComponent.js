@@ -150,7 +150,7 @@ export function updateClassInstance(
  * @param {*} workInProgress
  * @param {*} instance
  */
-function adoptClassInstance(workInProgress, instance) {
+export function adoptClassInstance(workInProgress, instance) {
   instance.updater = classComponentUpdater
   workInProgress.stateNode = instance
   instance._reactInternalFiber = workInProgress

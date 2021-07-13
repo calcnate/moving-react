@@ -91,7 +91,6 @@ export function processUpdateQueue(
 
     queue.shared.pending = null
 
-    //与hook相关，暂不关注
     const current = workInProgress.alternate
     if (current !== null) {
       const currentQueue = current.updateQueue
